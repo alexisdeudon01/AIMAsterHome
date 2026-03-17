@@ -1,0 +1,14 @@
+{
+  "configuration": {
+    "ollama_url": "Ollama generate endpoint URL",
+    "ollama_model": "Ollama model",
+    "anthropic_api_key": "Anthropic API key",
+    "anthropic_model_fast": "Anthropic fast model",
+    "repo_subdir": "Output base directory",
+    "git_auto_commit": "Enable local git commit",
+    "dashboard_profile": "Dashboard profile",
+    "generation_mode": "Generation mode",
+    "include_existing_dashboards_analysis": "Analyze existing dashboards",
+    "include_supervisor_analysis": "Analyze supervisor and add-ons"
+  }
+}
