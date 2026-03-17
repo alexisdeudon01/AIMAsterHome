@@ -1,0 +1,38 @@
+{
+  "name": "AI Dashboard Builder",
+  "version": "1.0.0",
+  "slug": "ai_dashboard_builder",
+  "description": "Generate Lovelace YAML dashboards from Home Assistant context with Ollama and Anthropic fallback.",
+  "startup": "application",
+  "boot": "auto",
+  "init": false,
+  "homeassistant_api": true,
+  "hassio_api": true,
+  "host_network": true,
+  "arch": ["aarch64", "amd64", "armv7", "i386"],
+  "map": ["share:rw", "config:rw"],
+  "options": {
+    "ollama_url": "http://homeassistant.local:11434/api/generate",
+    "ollama_model": "llama3.1",
+    "anthropic_api_key": "",
+    "anthropic_model_fast": "claude-3-5-haiku-latest",
+    "repo_subdir": "/share/ai_dashboard_builder",
+    "git_auto_commit": false,
+    "dashboard_profile": "mobile",
+    "generation_mode": "once",
+    "include_existing_dashboards_analysis": true,
+    "include_supervisor_analysis": true
+  },
+  "schema": {
+    "ollama_url": "str",
+    "ollama_model": "str",
+    "anthropic_api_key": "str",
+    "anthropic_model_fast": "str",
+    "repo_subdir": "str",
+    "git_auto_commit": "bool",
+    "dashboard_profile": "list(mobile|tablet|desktop)",
+    "generation_mode": "list(once)",
+    "include_existing_dashboards_analysis": "bool",
+    "include_supervisor_analysis": "bool"
+  }
+}
