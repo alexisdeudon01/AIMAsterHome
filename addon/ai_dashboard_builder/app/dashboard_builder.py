@@ -47,7 +47,7 @@ def load_options():
     defaults["repo_subdir"] = str(safe_output_base(defaults.get("repo_subdir")))
     if defaults.get("dashboard_profile") not in {"mobile", "tablet", "desktop"}:
         defaults["dashboard_profile"] = "mobile"
-    if defaults.get("generation_mode") != "once":
+    if defaults.get("generation_mode") not in {"once", "anthropic_only"}:
         defaults["generation_mode"] = "once"
     return defaults
 
@@ -237,6 +237,41 @@ def call_anthropic(api_key, model, prompt):
     return "\n".join(parts).strip()
 
 
+def verify_anthropic_connection(api_key, model, log_file):
+    """Validate Anthropic API key format and test live connectivity."""
+    if not api_key or not api_key.startswith("sk-ant-"):
+        log("Anthropic key format invalid: please set a valid API key starting with sk-ant-", log_file)
+        return False
+    try:
+        headers = {
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
+        payload = {
+            "model": model,
+            "max_tokens": 1,
+            "messages": [{"role": "user", "content": "hi"}],
+        }
+        response = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers=headers,
+            json=payload,
+            timeout=15,
+        )
+        if response.status_code == 200:
+            log("Anthropic connection OK", log_file)
+            return True
+        if response.status_code == 401:
+            log("Anthropic key rejected (HTTP 401 Unauthorized)", log_file)
+            return False
+        log(f"Anthropic connection test: HTTP {response.status_code} — {response.text[:200]}", log_file)
+        return False
+    except Exception as exc:
+        log(f"Anthropic connection test failed: {exc}", log_file)
+        return False
+
+
 def extract_yaml(text):
     return text.strip().replace("```yaml", "").replace("```", "").strip()
 
@@ -320,6 +355,14 @@ def main():
     log_file = logs_dir / "run.log"
     log("Starting AI dashboard generation", log_file)
 
+    anthropic_key = options.get("anthropic_api_key", "")
+    generation_mode = options.get("generation_mode", "once")
+
+    if anthropic_key:
+        verify_anthropic_connection(anthropic_key, options["anthropic_model_fast"], log_file)
+    elif generation_mode == "anthropic_only":
+        log("WARNING: generation_mode is set to anthropic_only but no anthropic_api_key is configured. Please add a valid Anthropic API key to use this mode.", log_file)
+
     ha_context = export_ha_context(generated_dir, log_file)
     states = ha_context.get("/api/states", []) if isinstance(ha_context.get("/api/states"), list) else []
     entity_analysis = analyze_entities(states)
@@ -345,16 +388,19 @@ def main():
     )
 
     ollama_yaml = ""
-    try:
-        ollama_yaml = extract_yaml(call_ollama(options["ollama_url"], options["ollama_model"], prompt))
-    except Exception as exc:
-        log(f"Ollama generation failed: {exc}", log_file)
+    if generation_mode != "anthropic_only":
+        try:
+            ollama_yaml = extract_yaml(call_ollama(options["ollama_url"], options["ollama_model"], prompt))
+        except Exception as exc:
+            log(f"Ollama generation failed: {exc}", log_file)
+    else:
+        log("Skipping Ollama (anthropic_only mode)", log_file)
 
     allowed_entities = set(entity_analysis.get("entity_ids", []))
     validation = (
         validate_dashboard(ollama_yaml, allowed_entities)
         if ollama_yaml
-        else {"valid": False, "errors": ["No YAML generated from Ollama"], "found_entities": []}
+        else {"valid": False, "errors": ["No Ollama YAML available"], "found_entities": []}
     )
     store_attempt(generated_dir, "ollama", ollama_yaml, validation)
 
@@ -362,17 +408,20 @@ def main():
     final_validation = validation
     source = "ollama"
 
-    if not validation["valid"] and options.get("anthropic_api_key"):
+    if not final_validation["valid"] and anthropic_key:
         try:
-            repair_prompt = build_repair_prompt(
-                ollama_yaml,
-                validation["errors"],
-                entity_analysis.get("entity_ids", []),
-                lessons,
-                options.get("dashboard_profile", "mobile"),
-            )
+            if ollama_yaml:
+                anthropic_prompt = build_repair_prompt(
+                    ollama_yaml,
+                    validation["errors"],
+                    entity_analysis.get("entity_ids", []),
+                    lessons,
+                    options.get("dashboard_profile", "mobile"),
+                )
+            else:
+                anthropic_prompt = prompt
             anthropic_yaml = extract_yaml(
-                call_anthropic(options["anthropic_api_key"], options["anthropic_model_fast"], repair_prompt)
+                call_anthropic(anthropic_key, options["anthropic_model_fast"], anthropic_prompt)
             )
             anthropic_validation = validate_dashboard(anthropic_yaml, allowed_entities)
             store_attempt(generated_dir, "anthropic", anthropic_yaml, anthropic_validation)
@@ -388,7 +437,7 @@ def main():
                 },
             )
         except Exception as exc:
-            log(f"Anthropic fallback failed: {exc}", log_file)
+            log(f"Anthropic generation failed: {exc}", log_file)
 
     if final_validation["valid"]:
         output_path = save_success(approved_dir, final_yaml)

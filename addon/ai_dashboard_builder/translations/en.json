@@ -7,7 +7,7 @@
     "repo_subdir": "Output base directory",
     "git_auto_commit": "Enable local git commit",
     "dashboard_profile": "Dashboard profile",
-    "generation_mode": "Generation mode",
+    "generation_mode": "Generation mode (once or anthropic_only)",
     "include_existing_dashboards_analysis": "Analyze existing dashboards",
     "include_supervisor_analysis": "Analyze supervisor and add-ons"
   }

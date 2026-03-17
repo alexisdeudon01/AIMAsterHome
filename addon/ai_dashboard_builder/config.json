@@ -1,6 +1,6 @@
 {
   "name": "AI Dashboard Builder",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "slug": "ai_dashboard_builder",
   "description": "Generate Lovelace YAML dashboards from Home Assistant context with Ollama and Anthropic fallback.",
   "startup": "application",
@@ -31,7 +31,7 @@
     "repo_subdir": "str",
     "git_auto_commit": "bool",
     "dashboard_profile": "list(mobile|tablet|desktop)",
-    "generation_mode": "list(once)",
+    "generation_mode": "list(once|anthropic_only)",
     "include_existing_dashboards_analysis": "bool",
     "include_supervisor_analysis": "bool"
   }
