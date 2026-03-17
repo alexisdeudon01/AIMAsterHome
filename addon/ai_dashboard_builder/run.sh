@@ -1,4 +1,6 @@
 #!/usr/bin/with-contenv bash
 set -euo pipefail
 
-python3 /app/dashboard_builder.py
+mkdir -p /data/proposals
+
+exec python3 /app/server.py
