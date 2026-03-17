@@ -1,4 +1,4 @@
-"""Execution engine: apply approved execution plan steps to /config."""
+"""Execution engine: apply approved execution plan steps to /homeassistant."""
 import os
 from pathlib import Path
 from typing import Any, Dict, List
@@ -6,7 +6,9 @@ from typing import Any, Dict, List
 import requests
 
 TIMEOUT = 30
-CONFIG_DIR = Path("/config")
+HA_URL = "http://supervisor/core"
+# homeassistant_config:rw maps the HA config directory to /homeassistant inside the container
+CONFIG_DIR = Path("/homeassistant")
 
 
 def _ha_headers() -> Dict[str, str]:
@@ -18,7 +20,7 @@ def _ha_headers() -> Dict[str, str]:
 
 
 def _safe_config_path(path_str: str) -> Path:
-    """Resolve path and ensure it stays within /config."""
+    """Resolve path and ensure it stays within /homeassistant."""
     candidate = Path(path_str)
     if not candidate.is_absolute():
         candidate = CONFIG_DIR / candidate
@@ -28,10 +30,10 @@ def _safe_config_path(path_str: str) -> Path:
         resolved.relative_to(config_resolved)
         return resolved
     except ValueError:
-        raise ValueError(f"Path escapes /config: {path_str}")
+        raise ValueError(f"Path escapes /homeassistant: {path_str}")
 
 
-def _execute_step(step: Dict[str, Any], ha_url: str) -> Dict[str, Any]:
+def _execute_step(step: Dict[str, Any]) -> Dict[str, Any]:
     action = step.get("action", "")
     result: Dict[str, Any] = {
         "step": step.get("step"),
@@ -61,7 +63,7 @@ def _execute_step(step: Dict[str, Any], ha_url: str) -> Dict[str, Any]:
             service = step.get("service", "")
             data = step.get("data", {})
             resp = requests.post(
-                f"{ha_url}/api/services/{domain}/{service}",
+                f"{HA_URL}/api/services/{domain}/{service}",
                 headers=_ha_headers(),
                 json=data,
                 timeout=TIMEOUT,
@@ -81,16 +83,32 @@ def _execute_step(step: Dict[str, Any], ha_url: str) -> Dict[str, Any]:
 
 
 def execute_plan(proposal: Dict[str, Any], options: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Execute all steps in the proposal's execution_plan after approval."""
-    ha_url = options.get("ha_url", "http://supervisor/core")
+    """Execute all steps in the proposal's execution_plan after approval.
+
+    Requires allow_write_homeassistant_config = true in add-on options.
+    """
+    allow_write = options.get("allow_write_homeassistant_config", False)
+    if not allow_write:
+        return [
+            {
+                "step": 0,
+                "action": "blocked",
+                "success": False,
+                "message": (
+                    "allow_write_homeassistant_config is disabled. "
+                    "Enable it in add-on options to apply changes."
+                ),
+            }
+        ]
+
     plan = proposal.get("execution_plan", [])
     results: List[Dict[str, Any]] = []
 
     for step in plan:
-        # Skip any step that does not require approval (safety guard; normally all steps do)
+        # Only execute steps that explicitly require approval (safety guard)
         if not step.get("requires_approval", True):
             continue
-        result = _execute_step(step, ha_url)
+        result = _execute_step(step)
         results.append(result)
         if not result["success"]:
             # Stop on first failure to avoid cascading issues

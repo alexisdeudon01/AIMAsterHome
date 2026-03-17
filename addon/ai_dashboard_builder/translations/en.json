@@ -1,10 +1,11 @@
 {
   "configuration": {
-    "anthropic_api_key": "Anthropic API key (starts with sk-ant-)",
-    "anthropic_model": "Anthropic model to use (e.g. claude-3-5-sonnet-latest)",
-    "ha_url": "Home Assistant Core URL (default: http://supervisor/core)",
-    "poll_interval_minutes": "Auto-run interval in minutes (0 = manual only)",
-    "collect_logs": "Include recent HA/Supervisor logs in analysis",
-    "log_lines": "Number of log lines to collect per source"
+    "anthropic_api_key": "Anthropic API key (starts with sk-ant-). Keep this secret.",
+    "anthropic_model": "Anthropic model to use (e.g. claude-3-5-sonnet-latest).",
+    "github_token": "GitHub Personal Access Token for HACS/integration discovery via GitHub Search API (optional).",
+    "poll_interval_minutes": "Auto-run interval in minutes (0 = manual only).",
+    "include_logs": "Include recent HA Core and Supervisor logs in the analysis context.",
+    "logs_max_lines": "Maximum number of log lines to collect per source (core, supervisor).",
+    "allow_write_homeassistant_config": "Allow the add-on to write dashboard YAML files to /homeassistant after approval. Must be true for the execution plan to apply changes."
   }
 }
