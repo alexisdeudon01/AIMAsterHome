@@ -32,10 +32,11 @@ def load_options() -> Dict[str, Any]:
     defaults: Dict[str, Any] = {
         "anthropic_api_key": "",
         "anthropic_model": "claude-3-5-sonnet-latest",
-        "ha_url": "http://supervisor/core",
+        "github_token": "",
         "poll_interval_minutes": 0,
-        "collect_logs": False,
-        "log_lines": 100,
+        "include_logs": False,
+        "logs_max_lines": 100,
+        "allow_write_homeassistant_config": False,
     }
     if OPTIONS_PATH.exists():
         try:
@@ -125,11 +126,21 @@ def status():
 
 
 @app.route("/proposal")
+@app.route("/proposal/latest")
 def get_proposal():
     """Return the latest proposal."""
     proposal = _latest_proposal()
     if not proposal:
         return jsonify({"error": "No proposals found"}), 404
+    return jsonify(proposal)
+
+
+@app.route("/proposal/<proposal_id>")
+def get_proposal_by_id(proposal_id: str):
+    """Return a specific proposal by ID."""
+    proposal = _load_proposal(proposal_id)
+    if not proposal:
+        return jsonify({"error": "Proposal not found"}), 404
     return jsonify(proposal)
 
 

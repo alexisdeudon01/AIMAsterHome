@@ -57,7 +57,7 @@ that matches this exact schema:
       "action": "<create_file|update_file|call_service>",
       "description": "<Human-readable description>",
       "requires_approval": true,
-      "path": "/config/dashboards/<filename>.yaml",
+      "path": "/homeassistant/dashboards/ai_dashboard_builder/<filename>.yaml",
       "content": "<file content when action is create_file or update_file>",
       "rollback": "<How to undo this step>"
     }
@@ -69,10 +69,12 @@ Rules:
 - Only use entity_ids that appear in the provided entity list. NEVER invent entity_ids.
 - Every execution_plan step MUST have requires_approval = true.
 - Dashboard YAML must be valid Lovelace storage-mode config (title, views, etc.).
-- execution_plan steps should only include create_file / update_file for dashboards.
+- execution_plan steps should only include create_file / update_file for dashboards
+  under /homeassistant/dashboards/ai_dashboard_builder/.
   Do NOT include addon installation steps in the execution_plan.
 - Limit to 3 dashboard proposals max. Keep YAML concise but functional.
 - For HACS recommendations, suggest real well-known repos (e.g. custom-cards, HACS integrations).
+  Prefer repos surfaced in the GitHub hints section when available.
 - Return ONLY the JSON object. No preamble, no markdown, no trailing text.
 """
 
@@ -143,6 +145,7 @@ def _build_user_prompt(snapshot: Dict[str, Any]) -> str:
     new_entities = snapshot.get("new_entities", [])
     new_devices = snapshot.get("new_devices", [])
     logs = snapshot.get("logs", {})
+    github_hints = snapshot.get("github_hints", {})
 
     # Truncate logs to keep prompt manageable
     log_text = ""
@@ -151,6 +154,22 @@ def _build_user_prompt(snapshot: Dict[str, Any]) -> str:
             log_text += f"\n### {src} logs (last lines)\n{content[-2000:]}\n"
     else:
         log_text = "Log collection disabled."
+
+    # Format GitHub hints
+    gh_text = ""
+    if github_hints.get("custom_components") or github_hints.get("lovelace_cards"):
+        cc = github_hints.get("custom_components", [])
+        lc = github_hints.get("lovelace_cards", [])
+        if cc:
+            gh_text += "\n### Custom Components Found on GitHub\n"
+            for item in cc[:5]:
+                gh_text += f"- {item['name']} ⭐{item['stars']}: {item['description']} ({item['url']})\n"
+        if lc:
+            gh_text += "\n### Lovelace Cards Found on GitHub\n"
+            for item in lc[:5]:
+                gh_text += f"- {item['name']} ⭐{item['stars']}: {item['description']} ({item['url']})\n"
+    else:
+        gh_text = "GitHub discovery not available (no token configured or search returned no results)."
 
     return f"""\
 Analyze this Home Assistant setup and return recommendations as strict JSON.
@@ -184,13 +203,18 @@ Analyze this Home Assistant setup and return recommendations as strict JSON.
 ## Recent Logs
 {log_text}
 
+## GitHub Discovery Hints
+{gh_text}
+
 ## Instructions
 1. Write a brief summary of this HA setup.
 2. List key findings: issues, missing integrations, improvement opportunities.
 3. Propose up to 3 Lovelace dashboards (each as a complete YAML, only using entity_ids from the list above).
+   Dashboard execution_plan paths MUST use /homeassistant/dashboards/ai_dashboard_builder/<filename>.yaml
 4. Recommend core HA integrations not yet installed but relevant to detected devices/domains.
 5. Recommend useful Supervisor add-ons (not already installed).
 6. Recommend HACS repos (custom components or Lovelace cards) that would improve this setup.
+   Prefer repos from the GitHub Discovery Hints section when relevant.
 7. Build an execution_plan with create_file steps for each dashboard proposal.
 8. Ask any clarifying questions if you need more context.
 

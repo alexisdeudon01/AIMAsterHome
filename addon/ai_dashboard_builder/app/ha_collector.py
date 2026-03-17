@@ -7,7 +7,10 @@ from typing import Any, Dict, List, Set
 
 import requests
 
+from github_search import discover_hacs_resources
+
 TIMEOUT = 30
+HA_URL = "http://supervisor/core"
 KNOWN_FILE = Path("/data/known.json")
 
 
@@ -25,8 +28,8 @@ def _extract_data(payload: Any) -> Any:
     return payload
 
 
-def ha_get(path: str, ha_url: str = "http://supervisor/core") -> Any:
-    resp = requests.get(f"{ha_url}{path}", headers=_ha_headers(), timeout=TIMEOUT)
+def ha_get(path: str) -> Any:
+    resp = requests.get(f"{HA_URL}{path}", headers=_ha_headers(), timeout=TIMEOUT)
     resp.raise_for_status()
     return _extract_data(resp.json())
 
@@ -52,10 +55,10 @@ def save_known(known: Dict[str, List[str]]) -> None:
 
 
 def collect_ha_snapshot(options: Dict[str, Any]) -> Dict[str, Any]:
-    """Fetch HA entities, devices, areas, supervisor add-ons and optional logs."""
-    ha_url = options.get("ha_url", "http://supervisor/core")
-    collect_logs = options.get("collect_logs", False)
-    log_lines = int(options.get("log_lines", 100))
+    """Fetch HA entities, devices, areas, supervisor add-ons, optional logs, and GitHub hints."""
+    include_logs = options.get("include_logs", False)
+    logs_max_lines = int(options.get("logs_max_lines", 100))
+    github_token = options.get("github_token") or None
 
     snapshot: Dict[str, Any] = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -68,12 +71,13 @@ def collect_ha_snapshot(options: Dict[str, Any]) -> Dict[str, Any]:
         "logs": {},
         "new_entities": [],
         "new_devices": [],
+        "github_hints": {},
         "errors": [],
     }
 
     # States (entities + attributes)
     try:
-        states = ha_get("/api/states", ha_url)
+        states = ha_get("/api/states")
         if isinstance(states, list):
             snapshot["states"] = states
             snapshot["entities"] = [s["entity_id"] for s in states if "entity_id" in s]
@@ -82,13 +86,13 @@ def collect_ha_snapshot(options: Dict[str, Any]) -> Dict[str, Any]:
 
     # Core config
     try:
-        snapshot["config"] = ha_get("/api/config", ha_url)
+        snapshot["config"] = ha_get("/api/config")
     except Exception as exc:
         snapshot["errors"].append(f"config: {exc}")
 
-    # Area registry (REST endpoint, may not exist on all versions)
+    # Area registry
     try:
-        areas = ha_get("/api/config/area_registry/list", ha_url)
+        areas = ha_get("/api/config/area_registry/list")
         if isinstance(areas, list):
             snapshot["areas"] = areas
     except Exception as exc:
@@ -96,7 +100,7 @@ def collect_ha_snapshot(options: Dict[str, Any]) -> Dict[str, Any]:
 
     # Device registry
     try:
-        devices = ha_get("/api/config/device_registry/list", ha_url)
+        devices = ha_get("/api/config/device_registry/list")
         if isinstance(devices, list):
             snapshot["devices"] = devices
     except Exception as exc:
@@ -112,7 +116,7 @@ def collect_ha_snapshot(options: Dict[str, Any]) -> Dict[str, Any]:
         snapshot["errors"].append(f"addons: {exc}")
 
     # Optional log collection
-    if collect_logs:
+    if include_logs:
         for log_source in ("core", "supervisor"):
             try:
                 resp = requests.get(
@@ -121,7 +125,7 @@ def collect_ha_snapshot(options: Dict[str, Any]) -> Dict[str, Any]:
                     timeout=TIMEOUT,
                 )
                 if resp.status_code == 200:
-                    lines = resp.text.splitlines()[-log_lines:]
+                    lines = resp.text.splitlines()[-logs_max_lines:]
                     snapshot["logs"][log_source] = "\n".join(lines)
             except Exception:
                 pass
@@ -144,5 +148,17 @@ def collect_ha_snapshot(options: Dict[str, Any]) -> Dict[str, Any]:
             "updated_at": snapshot["timestamp"],
         }
     )
+
+    # GitHub discovery (optional — degrades gracefully without token)
+    domains = sorted({eid.split(".")[0] for eid in snapshot["entities"] if "." in eid})
+    new_device_names = [
+        d.get("name", d.get("id", ""))
+        for d in snapshot["devices"]
+        if d.get("id", "") in current_device_ids - known_device_ids
+    ]
+    try:
+        snapshot["github_hints"] = discover_hacs_resources(new_device_names, domains, github_token)
+    except Exception as exc:
+        snapshot["errors"].append(f"github_search: {exc}")
 
     return snapshot

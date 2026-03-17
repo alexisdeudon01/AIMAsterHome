@@ -1,62 +1,110 @@
 # HA Analyst – Dashboard & Integration Recommender
 
-A Home Assistant OS Supervisor add-on that uses **Claude (Anthropic)** to analyse your running HA instance and propose dashboards, integrations, and HACS add-ons — with an **approval-gated execution plan**.
+A Home Assistant OS (HAOS / Supervisor) add-on that uses **Claude (Anthropic)** to analyse your running HA instance and propose dashboards, integrations, and HACS add-ons — with an **approval-gated execution plan**.
+
+> **Works with Lovelace in YAML mode.** Dashboard files are written under
+> `/homeassistant/dashboards/ai_dashboard_builder/` only after explicit user approval.
 
 ---
 
 ## Features
 
-- **Context collection** – entities, states, areas, devices, installed add-ons, and optional logs.
-- **New device/entity detection** – compares against the last run and highlights additions.
+- **Full HA context collection** – entities, states, areas, devices, installed add-ons, Supervisor info, and optional logs via the HA REST API.
+- **New device/entity detection** – compares against the last run (persisted under `/data`) and highlights additions.
 - **Claude-powered analysis** – generates structured JSON with findings, Lovelace dashboard YAML, core integration recommendations, Supervisor add-on suggestions, and HACS repo recommendations.
+- **GitHub discovery** – when a `github_token` is configured, searches GitHub for custom components and Lovelace cards relevant to your detected domains/devices.
 - **Approval-gated execution** – all plan steps require explicit user confirmation before any file is written.
+- **Rollback data** – original file content is stored in the proposal so changes can be undone.
 - **Ingress web UI** – accessible directly from the HA sidebar (no extra ports needed).
 
 ---
 
 ## Installation
 
-1. Add this repository to HA Supervisor → Add-on Store → *Repositories*.
+1. Add this repository to **HA Supervisor → Add-on Store → Repositories**.
 2. Install **HA Analyst – Dashboard & Integration Recommender**.
 3. Set your **Anthropic API key** in the add-on configuration.
-4. Start the add-on.
-5. Open the sidebar panel **HA Analyst**.
+4. *(Optional)* Set `allow_write_homeassistant_config: true` to allow the add-on to write approved dashboard files.
+5. Start the add-on.
+6. Open the sidebar panel **HA Analyst**.
 
 ---
 
 ## Configuration
 
-| Option | Default | Description |
-|---|---|---|
-| `anthropic_api_key` | *(required)* | Your Anthropic API key (`sk-ant-…`). Keep this secret. |
-| `anthropic_model` | `claude-3-5-sonnet-latest` | Claude model to use. |
-| `ha_url` | `http://supervisor/core` | Internal HA Core URL. |
-| `poll_interval_minutes` | `0` | Auto-run interval. `0` = manual only. |
-| `collect_logs` | `false` | Include recent Core/Supervisor logs in analysis. |
-| `log_lines` | `100` | Lines of logs to collect per source. |
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `anthropic_api_key` | password | *(required)* | Your Anthropic API key (`sk-ant-…`). |
+| `anthropic_model` | string | `claude-3-5-sonnet-latest` | Claude model to use. |
+| `github_token` | password | *(optional)* | GitHub Personal Access Token for discovery via GitHub Search API. |
+| `poll_interval_minutes` | int | `0` | Auto-run interval. `0` = manual only. |
+| `include_logs` | bool | `false` | Include recent Core/Supervisor logs in analysis. |
+| `logs_max_lines` | int | `100` | Lines of logs to collect per source. |
+| `allow_write_homeassistant_config` | bool | `false` | Must be `true` for the execution plan to write files. |
+
+### Lovelace YAML mode
+
+To use generated dashboards you need HA in YAML mode or store mode.  
+Add the following to your `configuration.yaml` so HA picks up the generated files:
+
+```yaml
+lovelace:
+  mode: yaml
+  resources: []
+  dashboards:
+    ai-overview:
+      mode: yaml
+      title: AI Overview
+      filename: dashboards/ai_dashboard_builder/overview.yaml
+```
+
+Or use **Storage mode** and register dashboards via the HA UI after the file is written.
 
 ---
 
-## Web UI Endpoints
+## Web UI & API Endpoints
 
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/` | Ingress UI |
-| `GET` | `/proposal` | Latest proposal JSON |
-| `GET` | `/proposals` | List of all proposals |
+| `GET` | `/status` | Analysis run status |
 | `POST` | `/generate` | Trigger a new analysis |
+| `GET` | `/proposal` | Latest proposal JSON |
+| `GET` | `/proposal/latest` | Latest proposal JSON (alias) |
+| `GET` | `/proposal/{id}` | Specific proposal by ID |
+| `GET` | `/proposals` | List of all proposals (summary) |
 | `POST` | `/approve` | Apply an approved execution plan |
 | `GET` | `/diff` | Preview execution plan steps |
-| `GET` | `/status` | Analysis run status |
+
+### Example: approve a proposal
+
+```bash
+curl -X POST http://<ha-ip>:8099/approve \
+  -H "Content-Type: application/json" \
+  -d '{"proposal_id": "<uuid>"}'
+```
+
+---
+
+## Folder Mappings
+
+| Container path | Host path | Purpose |
+|---|---|---|
+| `/homeassistant` | HA config directory | Dashboard YAML files are written here (requires `allow_write_homeassistant_config: true`) |
+| `/data` | Add-on data directory | Proposals, known entity/device IDs, options |
+
+> The add-on uses the `homeassistant_config:rw` mapping as recommended by the HA add-on guidelines.
 
 ---
 
 ## Security Notes
 
-- **Never share your Anthropic API key.** Store it only in add-on options (it is not logged).
-- The executor only writes files inside `/config`. Paths are validated to prevent directory traversal.
-- **No changes are applied automatically.** Every execution plan step requires explicit user approval via the UI.
+- **Never share your Anthropic API key.** Store it only in add-on options (it is never logged).
+- **GitHub token** is optional. Use a fine-grained token scoped to *public repositories read-only* for minimal permissions.
+- The executor only writes files inside `/homeassistant/dashboards/ai_dashboard_builder/`. Paths are validated to prevent directory traversal.
+- **No changes are applied automatically.** Every execution plan step requires explicit user approval via the `/approve` endpoint or UI.
 - Add-on installation suggestions are informational only – the add-on never installs anything automatically.
+- Set `allow_write_homeassistant_config: false` (the default) when you only want to review proposals without any risk of file writes.
 
 ---
 
@@ -66,3 +114,5 @@ A Home Assistant OS Supervisor add-on that uses **Claude (Anthropic)** to analys
 - Area/device registry endpoints require HA 2023.4+. Older instances will fall back gracefully.
 - HACS recommendations are Claude's suggestions based on your setup. Verify repos before installing.
 - Claude API calls may take 30–90 seconds depending on the model and instance size.
+- GitHub Search API has a rate limit of 10 unauthenticated requests/min; a token raises this significantly.
+
