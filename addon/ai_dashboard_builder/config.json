@@ -1,0 +1,31 @@
+{
+  "name": "AI Dashboard Builder",
+  "version": "1.0.0",
+  "slug": "ai_dashboard_builder",
+  "description": "Generates Lovelace dashboards using Ollama (local) with Anthropic as fallback.",
+  "arch": ["aarch64", "amd64", "armhf", "armv7", "i386"],
+  "homeassistant_api": true,
+  "hassio_api": true,
+  "host_network": false,
+  "map": ["share:rw", "config:rw"],
+  "options": {
+    "ollama_url": "http://localhost:11434",
+    "ollama_model": "mistral",
+    "anthropic_api_key": "",
+    "anthropic_model_fast": "claude-haiku-20240307",
+    "repo_subdir": "",
+    "git_auto_commit": false
+  },
+  "schema": {
+    "ollama_url": "url",
+    "ollama_model": "str",
+    "anthropic_api_key": "str",
+    "anthropic_model_fast": "str",
+    "repo_subdir": "str",
+    "git_auto_commit": "bool"
+  },
+  "startup": "application",
+  "boot": "manual",
+  "panel_icon": "mdi:view-dashboard-edit",
+  "panel_title": "AI Dashboard Builder"
+}

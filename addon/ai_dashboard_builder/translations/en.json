@@ -1,0 +1,28 @@
+{
+  "configuration": {
+    "ollama_url": {
+      "name": "Ollama URL",
+      "description": "Base URL of your local Ollama instance (e.g. http://localhost:11434)."
+    },
+    "ollama_model": {
+      "name": "Ollama Model",
+      "description": "Model name to use in Ollama (e.g. mistral, llama3)."
+    },
+    "anthropic_api_key": {
+      "name": "Anthropic API Key",
+      "description": "Optional. Used as fallback if Ollama fails. Leave empty to disable."
+    },
+    "anthropic_model_fast": {
+      "name": "Anthropic Model",
+      "description": "Anthropic model to use for YAML repair (e.g. claude-haiku-20240307)."
+    },
+    "repo_subdir": {
+      "name": "Repo Subdirectory",
+      "description": "Optional subdirectory inside /share/ai_dashboard_builder for git operations."
+    },
+    "git_auto_commit": {
+      "name": "Git Auto-Commit",
+      "description": "Commit generated files locally (no push). Requires /share/ai_dashboard_builder to be a git repo."
+    }
+  }
+}
