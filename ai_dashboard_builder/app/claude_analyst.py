@@ -1,13 +1,54 @@
 """Claude (Anthropic) analyst: builds prompt, calls API, validates JSON response."""
 import json
 import re
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import requests
 
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
+ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models"
 TIMEOUT = 180
 MAX_TOKENS = 8192
+
+# Approximate price per million tokens (USD) — input / output.
+# Sorted by descending prefix length so more-specific model names match first.
+# Entries marked (future) are speculative and will be refined once those models ship.
+_MODEL_PRICE_TABLE = [
+    ("claude-3-5-haiku", 0.80, 4.00),
+    ("claude-3-5-sonnet", 3.00, 15.00),
+    ("claude-3-7-sonnet", 3.00, 15.00),    # (future)
+    ("claude-3-haiku", 0.25, 1.25),
+    ("claude-3-sonnet", 3.00, 15.00),
+    ("claude-3-opus", 15.00, 75.00),
+    ("claude-sonnet-4", 3.00, 15.00),       # (future)
+    ("claude-opus-4", 15.00, 75.00),        # (future)
+]
+
+
+def _estimate_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
+    """Return an estimated USD cost for the given model and token counts."""
+    model_lower = model.lower()
+    for prefix, in_price, out_price in _MODEL_PRICE_TABLE:
+        if prefix in model_lower:
+            return (input_tokens * in_price + output_tokens * out_price) / 1_000_000
+    # Fallback: mid-range pricing
+    return (input_tokens * 3.00 + output_tokens * 15.00) / 1_000_000
+
+
+def list_anthropic_models(api_key: str) -> List[Dict[str, str]]:
+    """Fetch the list of available models from the Anthropic API."""
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+    }
+    resp = requests.get(ANTHROPIC_MODELS_URL, headers=headers, timeout=30)
+    resp.raise_for_status()
+    data = resp.json()
+    models = data.get("data", [])
+    return [
+        {"id": m["id"], "display_name": m.get("display_name", m["id"])}
+        for m in models
+    ]
 
 SYSTEM_PROMPT = """\
 You are an expert Home Assistant analyst. You receive a snapshot of a running \
@@ -79,8 +120,8 @@ Rules:
 """
 
 
-def call_claude(api_key: str, model: str, user_message: str) -> str:
-    """Call Anthropic Messages API and return raw text response."""
+def call_claude(api_key: str, model: str, user_message: str) -> Dict[str, Any]:
+    """Call Anthropic Messages API; return dict with 'text' and 'usage'."""
     headers = {
         "x-api-key": api_key,
         "anthropic-version": "2023-06-01",
@@ -94,8 +135,9 @@ def call_claude(api_key: str, model: str, user_message: str) -> str:
     }
     resp = requests.post(ANTHROPIC_URL, headers=headers, json=payload, timeout=TIMEOUT)
     resp.raise_for_status()
-    parts = [c["text"] for c in resp.json().get("content", []) if c.get("type") == "text"]
-    return "\n".join(parts).strip()
+    body = resp.json()
+    parts = [c["text"] for c in body.get("content", []) if c.get("type") == "text"]
+    return {"text": "\n".join(parts).strip(), "usage": body.get("usage", {})}
 
 
 def _extract_json(text: str) -> Dict[str, Any]:
@@ -245,7 +287,9 @@ def run_analysis(snapshot: Dict[str, Any], options: Dict[str, Any]) -> Dict[str,
 
     raw = ""
     try:
-        raw = call_claude(api_key, model, prompt)
+        response = call_claude(api_key, model, prompt)
+        raw = response["text"]
+        usage = response.get("usage", {})
         result = _extract_json(raw)
         # Enforce requires_approval on all plan steps
         for step in result.get("execution_plan", []):
@@ -254,6 +298,11 @@ def run_analysis(snapshot: Dict[str, Any], options: Dict[str, Any]) -> Dict[str,
         if len(result.get("recommended_dashboards", [])) > 3:
             result["recommended_dashboards"] = result["recommended_dashboards"][:3]
         result["_model_used"] = model
+        # Record token usage for cost tracking
+        input_tokens = usage.get("input_tokens", 0)
+        output_tokens = usage.get("output_tokens", 0)
+        result["_token_usage"] = {"input_tokens": input_tokens, "output_tokens": output_tokens}
+        result["_cost_usd"] = _estimate_cost_usd(model, input_tokens, output_tokens)
         return result
     except json.JSONDecodeError as exc:
         return {

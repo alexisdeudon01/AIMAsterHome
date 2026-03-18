@@ -1,34 +1,669 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Dashboard Builder</title>
-    <script>
-        async function generate() {
-            const response = await fetch('generate');
-            // handle response
-        }
-        async function loadProposals() {
-            const response = await fetch('status');
-            // handle response
-        }
-        async function loadProposalById(id) {
-            const response = await fetch('proposal/' + id);
-            // handle response
-        }
-        async function approveProposal(id) {
-            const response = await fetch('proposal/approve/' + id);
-            // handle response
-        }
-        async function diffProposal(id) {
-            const response = await fetch('proposal/diff/' + id);
-            // handle response
-        }
-    </script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HA Analyst</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #111318;
+      --surface: #1c1f26;
+      --surface2: #252830;
+      --border: #2e3340;
+      --primary: #4a90d9;
+      --primary-hover: #5ba3f0;
+      --success: #3ecf6e;
+      --warning: #f0a500;
+      --danger: #e05252;
+      --text: #e4e8f0;
+      --text-muted: #8a90a0;
+      --radius: 8px;
+      --shadow: 0 2px 12px rgba(0,0,0,.4);
+    }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+           background: var(--bg); color: var(--text); min-height: 100vh; font-size: 14px; }
+
+    /* Header */
+    header { background: var(--surface); border-bottom: 1px solid var(--border);
+             padding: 0 20px; display: flex; align-items: center; gap: 12px;
+             height: 56px; position: sticky; top: 0; z-index: 100; }
+    header h1 { font-size: 16px; font-weight: 600; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .status-badge { font-size: 12px; padding: 3px 10px; border-radius: 20px;
+                    background: var(--surface2); border: 1px solid var(--border);
+                    white-space: nowrap; max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
+    .status-badge.running { border-color: var(--warning); color: var(--warning); }
+    .status-badge.error   { border-color: var(--danger);  color: var(--danger); }
+    .status-badge.done    { border-color: var(--success);  color: var(--success); }
+    .budget-badge { font-size: 12px; padding: 3px 10px; border-radius: 20px;
+                    background: var(--surface2); border: 1px solid var(--border);
+                    white-space: nowrap; cursor: default; }
+    .budget-badge.near  { border-color: var(--warning); color: var(--warning); }
+    .budget-badge.over  { border-color: var(--danger);  color: var(--danger); }
+    .icon-btn { background: none; border: 1px solid var(--border); color: var(--text-muted);
+                border-radius: var(--radius); width: 34px; height: 34px; cursor: pointer;
+                display: flex; align-items: center; justify-content: center; font-size: 16px;
+                flex-shrink: 0; }
+    .icon-btn:hover { background: var(--surface2); color: var(--text); }
+
+    /* Main layout */
+    .layout { display: flex; height: calc(100vh - 56px); overflow: hidden; }
+
+    /* Sidebar */
+    .sidebar { width: 260px; flex-shrink: 0; background: var(--surface);
+               border-right: 1px solid var(--border); display: flex; flex-direction: column;
+               overflow: hidden; }
+    .sidebar-header { padding: 14px 16px 10px; border-bottom: 1px solid var(--border); }
+    .sidebar-header h2 { font-size: 12px; font-weight: 600; text-transform: uppercase;
+                         letter-spacing: .06em; color: var(--text-muted); margin-bottom: 10px; }
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px;
+           border-radius: var(--radius); border: none; cursor: pointer; font-size: 13px;
+           font-weight: 500; transition: background .15s, opacity .15s; }
+    .btn-primary { background: var(--primary); color: #fff; width: 100%; justify-content: center; }
+    .btn-primary:hover:not(:disabled) { background: var(--primary-hover); }
+    .btn-primary:disabled { opacity: .45; cursor: not-allowed; }
+    .btn-sm { padding: 5px 10px; font-size: 12px; }
+    .btn-success { background: var(--success); color: #000; }
+    .btn-success:hover { filter: brightness(1.1); }
+    .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text-muted); }
+    .btn-outline:hover { background: var(--surface2); color: var(--text); }
+    .btn-danger { background: transparent; border: 1px solid var(--danger); color: var(--danger); }
+    .btn-danger:hover { background: var(--danger); color: #fff; }
+
+    .proposals-list { flex: 1; overflow-y: auto; padding: 8px; }
+    .proposal-item { padding: 10px 12px; border-radius: var(--radius); cursor: pointer;
+                     margin-bottom: 4px; border: 1px solid transparent; }
+    .proposal-item:hover { background: var(--surface2); }
+    .proposal-item.active { background: var(--surface2); border-color: var(--primary); }
+    .proposal-item .pid { font-size: 11px; color: var(--text-muted); font-family: monospace; margin-bottom: 3px; }
+    .proposal-item .ptime { font-size: 12px; color: var(--text-muted); }
+    .proposal-item .psummary { font-size: 12px; margin-top: 4px; color: var(--text);
+                                display: -webkit-box; -webkit-line-clamp: 2;
+                                -webkit-box-orient: vertical; overflow: hidden; }
+    .badge { display: inline-block; font-size: 10px; padding: 2px 6px; border-radius: 10px; font-weight: 600; }
+    .badge-pending  { background: rgba(240,165,0,.15);  color: var(--warning); }
+    .badge-applied  { background: rgba(62,207,110,.15);  color: var(--success); }
+    .badge-error    { background: rgba(224,82,82,.15);   color: var(--danger); }
+    .empty-state { text-align: center; color: var(--text-muted); padding: 40px 16px; font-size: 13px; }
+
+    /* Detail pane */
+    .detail { flex: 1; overflow-y: auto; padding: 20px; }
+    .detail-placeholder { display: flex; flex-direction: column; align-items: center;
+                          justify-content: center; height: 100%; gap: 12px; color: var(--text-muted); }
+    .detail-placeholder svg { opacity: .3; }
+
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+             margin-bottom: 16px; overflow: hidden; }
+    .card-header { padding: 12px 16px; border-bottom: 1px solid var(--border);
+                   display: flex; align-items: center; gap: 8px; }
+    .card-header h3 { font-size: 13px; font-weight: 600; flex: 1; }
+    .card-body { padding: 16px; }
+
+    .meta-row { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 12px; }
+    .meta-item { font-size: 12px; color: var(--text-muted); }
+    .meta-item strong { color: var(--text); }
+
+    .finding-list, .rec-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+    .finding-list li { font-size: 13px; padding-left: 16px; position: relative; }
+    .finding-list li::before { content: "•"; position: absolute; left: 4px; color: var(--primary); }
+    .rec-list li { background: var(--surface2); border-radius: 6px; padding: 10px 12px; }
+    .rec-list li .rec-title { font-weight: 600; font-size: 13px; margin-bottom: 3px; }
+    .rec-list li .rec-reason { font-size: 12px; color: var(--text-muted); }
+    .rec-list li a { color: var(--primary); text-decoration: none; font-size: 11px; }
+    .rec-list li a:hover { text-decoration: underline; }
+
+    /* YAML / Code block */
+    .code-block { background: #0d1117; border-radius: 6px; padding: 12px;
+                  font-family: "SFMono-Regular", Consolas, monospace; font-size: 11px;
+                  overflow-x: auto; white-space: pre; color: #c9d1d9;
+                  border: 1px solid var(--border); max-height: 200px; overflow-y: auto; }
+    .code-toggle { background: none; border: none; color: var(--primary); cursor: pointer;
+                   font-size: 12px; padding: 0; margin-top: 6px; }
+
+    /* Dashboard card with expand */
+    .dash-card { background: var(--surface2); border-radius: 6px; padding: 12px;
+                 margin-bottom: 8px; }
+    .dash-card .dash-title { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+    .dash-card .dash-desc { font-size: 12px; color: var(--text-muted); margin-bottom: 6px; }
+    .dash-yaml { display: none; }
+    .dash-yaml.open { display: block; }
+
+    /* Execution plan */
+    .plan-step { display: flex; gap: 10px; background: var(--surface2); border-radius: 6px;
+                 padding: 10px 12px; margin-bottom: 6px; font-size: 12px; }
+    .plan-step .step-num { font-weight: 700; color: var(--primary); min-width: 20px; }
+    .plan-step .step-action { font-family: monospace; background: var(--bg); padding: 1px 6px;
+                               border-radius: 4px; font-size: 11px; }
+    .plan-step .step-desc { color: var(--text-muted); margin-top: 3px; }
+    .plan-step .step-path { font-family: monospace; color: var(--text-muted); font-size: 10px; margin-top: 2px; }
+
+    /* Action bar */
+    .action-bar { display: flex; gap: 8px; flex-wrap: wrap; padding: 12px 16px;
+                  background: var(--surface2); border-top: 1px solid var(--border); }
+
+    /* Settings modal */
+    .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.6);
+                     z-index: 200; align-items: center; justify-content: center; }
+    .modal-overlay.open { display: flex; }
+    .modal { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+             width: min(480px, 95vw); max-height: 85vh; overflow-y: auto; box-shadow: var(--shadow); }
+    .modal-header { padding: 16px 20px; border-bottom: 1px solid var(--border);
+                    display: flex; align-items: center; gap: 8px; }
+    .modal-header h2 { font-size: 15px; font-weight: 600; flex: 1; }
+    .modal-body { padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+    .modal-footer { padding: 14px 20px; border-top: 1px solid var(--border);
+                    display: flex; justify-content: flex-end; gap: 8px; }
+    label { font-size: 12px; font-weight: 500; color: var(--text-muted); display: block; margin-bottom: 5px; }
+    select, input[type="number"], input[type="range"] { width: 100%; background: var(--bg);
+      border: 1px solid var(--border); color: var(--text); border-radius: 6px;
+      padding: 7px 10px; font-size: 13px; }
+    select:focus, input[type="number"]:focus { outline: none; border-color: var(--primary); }
+    .range-row { display: flex; align-items: center; gap: 10px; }
+    .range-row input[type="range"] { flex: 1; padding: 0; accent-color: var(--primary); }
+    .range-val { font-size: 13px; font-weight: 600; min-width: 70px; text-align: right;
+                 color: var(--primary); }
+    .info-box { background: rgba(74,144,217,.1); border: 1px solid rgba(74,144,217,.3);
+                border-radius: 6px; padding: 10px 12px; font-size: 12px; color: var(--text-muted); }
+    .warn-box { background: rgba(240,165,0,.1); border: 1px solid rgba(240,165,0,.3);
+                border-radius: 6px; padding: 10px 12px; font-size: 12px; color: var(--warning); }
+
+    /* Spinner */
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.3);
+               border-top-color: #fff; border-radius: 50%; animation: spin .7s linear infinite; }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+  </style>
 </head>
 <body>
-    <h1>AI Dashboard Builder</h1>
-    <div id="proposals"></div>
+
+<header>
+  <h1>🏠 HA Analyst</h1>
+  <span id="statusBadge" class="status-badge">Idle</span>
+  <span id="budgetBadge" class="budget-badge" title="Estimated monthly spend">Loading…</span>
+  <button class="icon-btn" onclick="openSettings()" title="Settings">⚙️</button>
+</header>
+
+<div class="layout">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <h2>Analyses</h2>
+      <button id="generateBtn" class="btn btn-primary" onclick="generateAnalysis()">
+        <span id="generateLabel">🚀 New Analysis</span>
+      </button>
+    </div>
+    <div class="proposals-list" id="proposalsList">
+      <div class="empty-state">No analyses yet.<br>Click "New Analysis" to start.</div>
+    </div>
+  </aside>
+
+  <!-- Detail pane -->
+  <main class="detail" id="detailPane">
+    <div class="detail-placeholder" id="placeholderMsg">
+      <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+        <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>
+      </svg>
+      <p>Select an analysis from the list<br>or generate a new one.</p>
+    </div>
+    <div id="proposalDetail" style="display:none"></div>
+  </main>
+</div>
+
+<!-- Settings Modal -->
+<div class="modal-overlay" id="settingsModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>⚙️ Settings</h2>
+      <button class="icon-btn" onclick="closeSettings()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="noKeyWarn" class="warn-box" style="display:none">
+        ⚠️ No Anthropic API key detected. Configure it in the add-on options (HA Supervisor).
+      </div>
+      <div>
+        <label for="modelSelect">Claude Model</label>
+        <select id="modelSelect" onchange="onModelChange()">
+          <option value="">Loading models…</option>
+        </select>
+        <div id="modelLoadErr" style="font-size:11px;color:var(--danger);margin-top:4px;display:none"></div>
+      </div>
+      <div>
+        <label>Monthly Budget Cap (max $200)</label>
+        <div class="range-row">
+          <input type="range" id="budgetSlider" min="0" max="200" step="5"
+                 oninput="document.getElementById('budgetVal').textContent='$'+this.value+'.00'">
+          <span class="range-val" id="budgetVal">$50.00</span>
+        </div>
+        <div class="info-box" style="margin-top:8px">
+          Analyses are blocked once this month's estimated cost reaches the cap.
+          Set to $0 to disable the cap.
+        </div>
+      </div>
+      <div id="budgetUsageInfo" class="info-box"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline btn-sm" onclick="closeSettings()">Cancel</button>
+      <button class="btn btn-primary btn-sm" onclick="saveSettings()">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+let _pollTimer = null;
+let _activeProposalId = null;
+let _settings = {};
+
+// ── Initialise ─────────────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', () => {
+  refreshStatus();
+  loadProposals();
+  refreshBudget();
+  setInterval(refreshBudget, 60000);
+});
+
+// ── Status polling ──────────────────────────────────────────────────────────
+async function refreshStatus() {
+  try {
+    const r = await fetch('status');
+    const d = await r.json();
+    updateStatusBadge(d.analysis || {});
+    if (d.analysis && d.analysis.running) {
+      if (!_pollTimer) _pollTimer = setInterval(pollRunning, 3000);
+    } else {
+      clearInterval(_pollTimer); _pollTimer = null;
+    }
+  } catch(e) { /* ignore */ }
+}
+
+async function pollRunning() {
+  try {
+    const r = await fetch('status');
+    const d = await r.json();
+    updateStatusBadge(d.analysis || {});
+    if (!(d.analysis && d.analysis.running)) {
+      clearInterval(_pollTimer); _pollTimer = null;
+      setGenerateBtn(false);
+      await loadProposals();
+      refreshBudget();
+    }
+  } catch(e) { /* ignore */ }
+}
+
+function updateStatusBadge(analysis) {
+  const el = document.getElementById('statusBadge');
+  const msg = analysis.message || 'Idle';
+  el.textContent = msg;
+  el.className = 'status-badge';
+  if (analysis.running) {
+    el.classList.add('running');
+    setGenerateBtn(true);
+  } else if (msg.startsWith('Error')) {
+    el.classList.add('error');
+    setGenerateBtn(false);
+  } else if (msg.startsWith('Done')) {
+    el.classList.add('done');
+    setGenerateBtn(false);
+  } else {
+    setGenerateBtn(false);
+  }
+}
+
+function setGenerateBtn(running) {
+  const btn = document.getElementById('generateBtn');
+  const lbl = document.getElementById('generateLabel');
+  btn.disabled = running;
+  lbl.innerHTML = running
+    ? '<span class="spinner"></span> Running…'
+    : '🚀 New Analysis';
+}
+
+// ── Budget ──────────────────────────────────────────────────────────────────
+async function refreshBudget() {
+  try {
+    const r = await fetch('budget');
+    const d = await r.json();
+    const el = document.getElementById('budgetBadge');
+    const pct = d.monthly_budget_usd > 0 ? d.current_month_usd / d.monthly_budget_usd : 0;
+    el.textContent = d.monthly_budget_usd > 0
+      ? `💰 $${d.current_month_usd.toFixed(2)} / $${d.monthly_budget_usd.toFixed(0)}`
+      : `💰 $${d.current_month_usd.toFixed(2)} (no cap)`;
+    el.className = 'budget-badge' + (pct >= 1 ? ' over' : pct >= 0.8 ? ' near' : '');
+    el.title = `${d.analyses_this_month} analyse(s) this month`;
+  } catch(e) { /* ignore */ }
+}
+
+// ── Generate ────────────────────────────────────────────────────────────────
+async function generateAnalysis() {
+  setGenerateBtn(true);
+  try {
+    const r = await fetch('generate', { method: 'POST' });
+    const d = await r.json();
+    if (!r.ok) {
+      alert(d.error || 'Failed to start analysis');
+      setGenerateBtn(false);
+      return;
+    }
+    updateStatusBadge({ running: true, message: 'Analysis starting…' });
+    _pollTimer = setInterval(pollRunning, 3000);
+  } catch(e) {
+    alert('Network error: ' + e.message);
+    setGenerateBtn(false);
+  }
+}
+
+// ── Proposals list ──────────────────────────────────────────────────────────
+async function loadProposals() {
+  try {
+    const r = await fetch('proposals');
+    const items = await r.json();
+    const el = document.getElementById('proposalsList');
+    if (!items.length) {
+      el.innerHTML = '<div class="empty-state">No analyses yet.<br>Click "New Analysis" to start.</div>';
+      return;
+    }
+    el.innerHTML = items.map(p => `
+      <div class="proposal-item${p.id === _activeProposalId ? ' active' : ''}"
+           onclick="selectProposal('${p.id}')" id="pitem-${p.id}">
+        <div class="pid">${p.id ? p.id.slice(0, 8) : '—'}</div>
+        <div class="ptime">${formatDate(p.timestamp)}
+          <span class="badge badge-${p.has_error ? 'error' : (p.status || 'pending')}">${p.has_error ? 'error' : (p.status || 'pending')}</span>
+        </div>
+        <div class="psummary">${escHtml(p.summary || '')}</div>
+      </div>
+    `).join('');
+    // Auto-select first if none selected
+    if (!_activeProposalId && items[0]?.id) selectProposal(items[0].id);
+  } catch(e) { /* ignore */ }
+}
+
+async function selectProposal(id) {
+  _activeProposalId = id;
+  // Highlight in sidebar
+  document.querySelectorAll('.proposal-item').forEach(el => el.classList.remove('active'));
+  const item = document.getElementById('pitem-' + id);
+  if (item) item.classList.add('active');
+
+  try {
+    const r = await fetch('proposal/' + id);
+    const p = await r.json();
+    renderProposal(p);
+  } catch(e) {
+    document.getElementById('proposalDetail').innerHTML = '<div class="card-body">Failed to load proposal.</div>';
+  }
+}
+
+// ── Render proposal detail ──────────────────────────────────────────────────
+function renderProposal(p) {
+  document.getElementById('placeholderMsg').style.display = 'none';
+  const detail = document.getElementById('proposalDetail');
+  detail.style.display = 'block';
+
+  const snap = p.snapshot_summary || {};
+  const ts = formatDate(p.timestamp);
+  const model = p._model_used || '—';
+  const cost = p._token_usage
+    ? `~$${((p._token_usage.input_tokens * 3 + p._token_usage.output_tokens * 15) / 1e6).toFixed(4)} (est.)`
+    : '—';
+
+  let html = `
+    <div class="card">
+      <div class="card-header">
+        <h3>📊 Summary</h3>
+        <span class="badge badge-${p.error ? 'error' : (p.status || 'pending')}">${p.status || 'pending'}</span>
+      </div>
+      <div class="card-body">
+        <div class="meta-row">
+          <div class="meta-item">🕐 <strong>${ts}</strong></div>
+          <div class="meta-item">🤖 <strong>${escHtml(model)}</strong></div>
+          <div class="meta-item">🏠 <strong>${snap.entities || 0}</strong> entities</div>
+          <div class="meta-item">🆕 <strong>${snap.new_entities || 0}</strong> new entities</div>
+          <div class="meta-item">💵 Cost: <strong>${cost}</strong></div>
+        </div>
+        ${p.error ? `<div class="warn-box">${escHtml(p.error)}</div>` : ''}
+        <p style="font-size:13px;line-height:1.6">${escHtml(p.summary || '')}</p>
+      </div>
+    </div>`;
+
+  // Key findings
+  if ((p.key_findings || []).length) {
+    html += `<div class="card">
+      <div class="card-header"><h3>🔍 Key Findings</h3></div>
+      <div class="card-body">
+        <ul class="finding-list">${p.key_findings.map(f => `<li>${escHtml(f)}</li>`).join('')}</ul>
+      </div></div>`;
+  }
+
+  // Recommended dashboards
+  if ((p.recommended_dashboards || []).length) {
+    html += `<div class="card">
+      <div class="card-header"><h3>📋 Recommended Dashboards</h3></div>
+      <div class="card-body">`;
+    p.recommended_dashboards.forEach((d, i) => {
+      html += `<div class="dash-card">
+        <div class="dash-title">${escHtml(d.title || '')}</div>
+        <div class="dash-desc">${escHtml(d.description || '')}</div>
+        <button class="code-toggle" onclick="toggleYaml('dash-${i}')">▶ Show YAML</button>
+        <div id="dash-${i}" class="dash-yaml">
+          <div class="code-block">${escHtml(d.yaml || '')}</div>
+        </div>
+      </div>`;
+    });
+    html += `</div></div>`;
+  }
+
+  // Recommended integrations
+  if ((p.recommended_integrations || []).length) {
+    html += `<div class="card">
+      <div class="card-header"><h3>🔌 Recommended Integrations</h3></div>
+      <div class="card-body">
+        <ul class="rec-list">${p.recommended_integrations.map(i => `
+          <li>
+            <div class="rec-title">${escHtml(i.name || '')}</div>
+            <div class="rec-reason">${escHtml(i.reason || '')}</div>
+            ${i.url ? `<a href="${escHtml(i.url)}" target="_blank" rel="noopener">→ Documentation</a>` : ''}
+          </li>`).join('')}</ul>
+      </div></div>`;
+  }
+
+  // Recommended add-ons
+  if ((p.recommended_addons || []).length) {
+    html += `<div class="card">
+      <div class="card-header"><h3>🧩 Recommended Add-ons</h3></div>
+      <div class="card-body">
+        <ul class="rec-list">${p.recommended_addons.map(a => `
+          <li>
+            <div class="rec-title">${escHtml(a.name || '')}</div>
+            <div class="rec-reason">${escHtml(a.reason || '')}</div>
+            ${a.url ? `<a href="${escHtml(a.url)}" target="_blank" rel="noopener">→ Store page</a>` : ''}
+          </li>`).join('')}</ul>
+      </div></div>`;
+  }
+
+  // HACS recommendations
+  if ((p.recommended_hacs || []).length) {
+    html += `<div class="card">
+      <div class="card-header"><h3>🛒 HACS Recommendations</h3></div>
+      <div class="card-body">
+        <ul class="rec-list">${p.recommended_hacs.map(h => `
+          <li>
+            <div class="rec-title">${escHtml(h.name || '')} <span style="font-weight:400;font-size:11px;color:var(--text-muted)">[${escHtml(h.category || '')}]</span></div>
+            <div class="rec-reason">${escHtml(h.reason || '')}</div>
+            ${h.url ? `<a href="${escHtml(h.url)}" target="_blank" rel="noopener">→ GitHub</a>` : ''}
+          </li>`).join('')}</ul>
+      </div></div>`;
+  }
+
+  // Execution plan
+  if ((p.execution_plan || []).length) {
+    html += `<div class="card">
+      <div class="card-header"><h3>⚡ Execution Plan</h3>
+        <span style="font-size:11px;color:var(--text-muted)">${p.execution_plan.length} step(s)</span>
+      </div>
+      <div class="card-body">
+        ${p.execution_plan.map(s => `
+          <div class="plan-step">
+            <div class="step-num">${s.step}</div>
+            <div>
+              <span class="step-action">${escHtml(s.action || '')}</span>
+              <div class="step-desc">${escHtml(s.description || '')}</div>
+              ${s.path ? `<div class="step-path">${escHtml(s.path)}</div>` : ''}
+            </div>
+          </div>`).join('')}
+      </div>
+      <div class="action-bar">
+        <button class="btn btn-outline btn-sm" onclick="previewDiff('${escHtml(p.id || '')}')">🔍 Preview diff</button>
+        ${p.status !== 'applied'
+          ? `<button class="btn btn-success btn-sm" onclick="approvePlan('${escHtml(p.id || '')}')">✅ Apply plan</button>`
+          : `<span style="font-size:12px;color:var(--success)">✔ Applied</span>`
+        }
+      </div>
+    </div>`;
+  }
+
+  // Questions
+  if ((p.questions || []).length) {
+    html += `<div class="card">
+      <div class="card-header"><h3>❓ Clarifying Questions</h3></div>
+      <div class="card-body">
+        <ul class="finding-list">${p.questions.map(q => `<li>${escHtml(q)}</li>`).join('')}</ul>
+      </div></div>`;
+  }
+
+  detail.innerHTML = html;
+}
+
+// ── Actions ─────────────────────────────────────────────────────────────────
+async function approvePlan(id) {
+  if (!confirm('Apply this execution plan to your Home Assistant config?')) return;
+  try {
+    const r = await fetch('approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ proposal_id: id }),
+    });
+    const d = await r.json();
+    if (!r.ok) { alert(d.error || 'Failed to apply plan'); return; }
+    alert('Plan applied successfully!');
+    selectProposal(id);
+    loadProposals();
+  } catch(e) { alert('Network error: ' + e.message); }
+}
+
+async function previewDiff(id) {
+  try {
+    const r = await fetch('diff?proposal_id=' + id);
+    const d = await r.json();
+    const lines = (d.plan || []).map(s =>
+      `Step ${s.step}: ${s.action}\n  ${s.description}\n  Path: ${s.path || '—'}\n  Rollback: ${s.rollback || '—'}`
+    ).join('\n\n');
+    alert(lines || 'No steps in plan.');
+  } catch(e) { alert('Failed to load diff: ' + e.message); }
+}
+
+function toggleYaml(id) {
+  const el = document.getElementById(id);
+  const btn = el.previousElementSibling;
+  el.classList.toggle('open');
+  btn.textContent = el.classList.contains('open') ? '▼ Hide YAML' : '▶ Show YAML';
+}
+
+// ── Settings modal ──────────────────────────────────────────────────────────
+async function openSettings() {
+  document.getElementById('settingsModal').classList.add('open');
+  // Load current settings
+  try {
+    const [sr, br] = await Promise.all([fetch('settings'), fetch('budget')]);
+    _settings = await sr.json();
+    const budget = await br.json();
+
+    document.getElementById('noKeyWarn').style.display = _settings.has_api_key ? 'none' : 'block';
+
+    const budgetSlider = document.getElementById('budgetSlider');
+    const budgetVal = document.getElementById('budgetVal');
+    budgetSlider.value = _settings.monthly_budget_usd || 50;
+    budgetVal.textContent = '$' + (Math.round(_settings.monthly_budget_usd || 50)) + '.00';
+
+    document.getElementById('budgetUsageInfo').textContent =
+      `This month: $${budget.current_month_usd.toFixed(4)} spent across ${budget.analyses_this_month} analysis run(s).`;
+
+    // Load models if API key available
+    const sel = document.getElementById('modelSelect');
+    const errEl = document.getElementById('modelLoadErr');
+    if (_settings.has_api_key) {
+      sel.innerHTML = '<option value="">Loading…</option>';
+      sel.disabled = true;
+      errEl.style.display = 'none';
+      try {
+        const mr = await fetch('models');
+        const md = await mr.json();
+        if (md.models && md.models.length) {
+          sel.innerHTML = md.models.map(m =>
+            `<option value="${escHtml(m.id)}"${m.id === _settings.anthropic_model ? ' selected' : ''}>${escHtml(m.display_name || m.id)}</option>`
+          ).join('');
+        } else {
+          sel.innerHTML = `<option value="${escHtml(_settings.anthropic_model)}">${escHtml(_settings.anthropic_model)}</option>`;
+          errEl.textContent = md.error || 'Could not load model list';
+          errEl.style.display = 'block';
+        }
+        sel.disabled = false;
+      } catch(e) {
+        sel.innerHTML = `<option value="${escHtml(_settings.anthropic_model)}">${escHtml(_settings.anthropic_model)}</option>`;
+        sel.disabled = false;
+        errEl.textContent = 'Could not reach Anthropic API to list models.';
+        errEl.style.display = 'block';
+      }
+    } else {
+      sel.innerHTML = '<option value="">Set API key first</option>';
+      sel.disabled = true;
+    }
+  } catch(e) { /* ignore */ }
+}
+
+function closeSettings() {
+  document.getElementById('settingsModal').classList.remove('open');
+}
+
+function onModelChange() { /* nothing extra needed */ }
+
+async function saveSettings() {
+  const model = document.getElementById('modelSelect').value;
+  const budget = parseFloat(document.getElementById('budgetSlider').value);
+  try {
+    const r = await fetch('settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ anthropic_model: model, monthly_budget_usd: budget }),
+    });
+    const d = await r.json();
+    if (!r.ok) { alert(d.error || 'Failed to save'); return; }
+    closeSettings();
+    refreshBudget();
+  } catch(e) { alert('Network error: ' + e.message); }
+}
+
+// Close modal on overlay click
+document.getElementById('settingsModal').addEventListener('click', function(e) {
+  if (e.target === this) closeSettings();
+});
+
+// ── Utils ────────────────────────────────────────────────────────────────────
+function escHtml(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function formatDate(iso) {
+  if (!iso) return '—';
+  try {
+    return new Date(iso).toLocaleString(undefined, { dateStyle:'short', timeStyle:'short' });
+  } catch(e) { return iso; }
+}
+</script>
 </body>
 </html>
