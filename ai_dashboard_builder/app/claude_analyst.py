@@ -4,6 +4,7 @@ import re
 from typing import Any, Dict, List
 
 import requests
+from requests.exceptions import HTTPError
 
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models"
@@ -38,17 +39,34 @@ def _estimate_cost_usd(model: str, input_tokens: int, output_tokens: int) -> flo
 def list_anthropic_models(api_key: str) -> List[Dict[str, str]]:
     """Fetch the list of available models from the Anthropic API."""
     headers = {
-        "x-api-key": api_key,
+        "x-api-key": api_key.strip(),
         "anthropic-version": "2023-06-01",
     }
     resp = requests.get(ANTHROPIC_MODELS_URL, headers=headers, timeout=30)
-    resp.raise_for_status()
+    try:
+        resp.raise_for_status()
+    except HTTPError as exc:
+        detail = _extract_api_error(exc)
+        raise HTTPError(detail, response=exc.response) from exc
     data = resp.json()
     models = data.get("data", [])
     return [
         {"id": m["id"], "display_name": m.get("display_name", m["id"])}
         for m in models
     ]
+
+
+def _extract_api_error(exc: HTTPError) -> str:
+    """Return a human-readable error string from an Anthropic HTTPError response."""
+    try:
+        body = exc.response.json()
+        msg = body.get("error", {}).get("message", "")
+        if msg:
+            return f"Anthropic API error ({exc.response.status_code}): {msg}"
+    except (AttributeError, ValueError, KeyError):
+        pass
+    return str(exc)
+
 
 SYSTEM_PROMPT = """\
 You are an expert Home Assistant analyst. You receive a snapshot of a running \
@@ -123,7 +141,7 @@ Rules:
 def call_claude(api_key: str, model: str, user_message: str) -> Dict[str, Any]:
     """Call Anthropic Messages API; return dict with 'text' and 'usage'."""
     headers = {
-        "x-api-key": api_key,
+        "x-api-key": api_key.strip(),
         "anthropic-version": "2023-06-01",
         "content-type": "application/json",
     }
@@ -134,7 +152,10 @@ def call_claude(api_key: str, model: str, user_message: str) -> Dict[str, Any]:
         "messages": [{"role": "user", "content": user_message}],
     }
     resp = requests.post(ANTHROPIC_URL, headers=headers, json=payload, timeout=TIMEOUT)
-    resp.raise_for_status()
+    try:
+        resp.raise_for_status()
+    except HTTPError as exc:
+        raise HTTPError(_extract_api_error(exc), response=exc.response) from exc
     body = resp.json()
     parts = [c["text"] for c in body.get("content", []) if c.get("type") == "text"]
     return {"text": "\n".join(parts).strip(), "usage": body.get("usage", {})}
@@ -266,8 +287,8 @@ Remember: return ONLY the JSON object. No markdown, no preamble.
 
 def run_analysis(snapshot: Dict[str, Any], options: Dict[str, Any]) -> Dict[str, Any]:
     """Run Claude analysis and return parsed proposal dict."""
-    api_key = options.get("anthropic_api_key", "")
-    model = options.get("anthropic_model", "claude-3-5-sonnet-latest")
+    api_key = options.get("anthropic_api_key", "").strip()
+    model = (options.get("anthropic_model") or "").strip() or "claude-3-5-sonnet-latest"
 
     if not api_key:
         return {
@@ -304,6 +325,19 @@ def run_analysis(snapshot: Dict[str, Any], options: Dict[str, Any]) -> Dict[str,
         result["_token_usage"] = {"input_tokens": input_tokens, "output_tokens": output_tokens}
         result["_cost_usd"] = _estimate_cost_usd(model, input_tokens, output_tokens)
         return result
+    except HTTPError as exc:
+        return {
+            "error": str(exc),
+            "summary": "Analysis failed – Anthropic API returned an error. Check your API key and model name.",
+            "key_findings": [],
+            "new_devices_or_entities": [],
+            "recommended_dashboards": [],
+            "recommended_integrations": [],
+            "recommended_addons": [],
+            "recommended_hacs": [],
+            "execution_plan": [],
+            "questions": [],
+        }
     except json.JSONDecodeError as exc:
         return {
             "error": f"JSON parse error: {exc}",
