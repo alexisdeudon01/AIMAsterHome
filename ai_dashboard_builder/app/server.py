@@ -9,13 +9,18 @@ from typing import Any, Dict, Optional
 
 from flask import Flask, jsonify, render_template, request
 
-from claude_analyst import run_analysis
+from claude_analyst import list_anthropic_models, run_analysis
 from executor import execute_plan
 from ha_collector import collect_ha_snapshot
 
 DATA_DIR = Path("/data")
 PROPOSALS_DIR = DATA_DIR / "proposals"
 OPTIONS_PATH = DATA_DIR / "options.json"
+USER_PREFS_PATH = DATA_DIR / "user_prefs.json"
+USAGE_PATH = DATA_DIR / "usage.json"
+
+DEFAULT_MONTHLY_BUDGET = 50.0
+MAX_MONTHLY_BUDGET = 200.0
 
 app = Flask(__name__, template_folder="templates")
 
@@ -37,10 +42,17 @@ def load_options() -> Dict[str, Any]:
         "include_logs": False,
         "logs_max_lines": 100,
         "allow_write_homeassistant_config": False,
+        "monthly_budget_usd": DEFAULT_MONTHLY_BUDGET,
     }
     if OPTIONS_PATH.exists():
         try:
             defaults.update(json.loads(OPTIONS_PATH.read_text(encoding="utf-8")))
+        except Exception:
+            pass
+    # Merge user-editable preferences (model selection, budget) on top
+    if USER_PREFS_PATH.exists():
+        try:
+            defaults.update(json.loads(USER_PREFS_PATH.read_text(encoding="utf-8")))
         except Exception:
             pass
     return defaults
@@ -72,6 +84,26 @@ def _save_proposal(proposal: Dict[str, Any]) -> None:
     path.write_text(json.dumps(proposal, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
+def _load_usage() -> Dict[str, Any]:
+    if USAGE_PATH.exists():
+        try:
+            return json.loads(USAGE_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {"month": "", "current_month_usd": 0.0, "analyses_this_month": 0}
+
+
+def _record_usage(cost_usd: float) -> None:
+    now = datetime.now(timezone.utc)
+    month_key = now.strftime("%Y-%m")
+    usage = _load_usage()
+    if usage.get("month") != month_key:
+        usage = {"month": month_key, "current_month_usd": 0.0, "analyses_this_month": 0}
+    usage["current_month_usd"] = round(usage.get("current_month_usd", 0.0) + cost_usd, 4)
+    usage["analyses_this_month"] = usage.get("analyses_this_month", 0) + 1
+    USAGE_PATH.write_text(json.dumps(usage, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
 # ---------------------------------------------------------------------------
 # Background analysis worker
 # ---------------------------------------------------------------------------
@@ -79,12 +111,33 @@ def _save_proposal(proposal: Dict[str, Any]) -> None:
 def _run_analysis_background() -> None:
     global _analysis_running, _analysis_status
     try:
-        _analysis_status = {"running": True, "message": "Collecting HA context…"}
         options = load_options()
+
+        # Budget guard: refuse if this month's spend already exceeds the cap
+        monthly_budget = float(options.get("monthly_budget_usd", DEFAULT_MONTHLY_BUDGET))
+        usage = _load_usage()
+        now_month = datetime.now(timezone.utc).strftime("%Y-%m")
+        spent = usage.get("current_month_usd", 0.0) if usage.get("month") == now_month else 0.0
+        if monthly_budget > 0 and spent >= monthly_budget:
+            _analysis_status = {
+                "running": False,
+                "message": (
+                    f"Monthly budget cap of ${monthly_budget:.2f} reached "
+                    f"(spent ${spent:.2f} this month). Increase the budget to continue."
+                ),
+            }
+            return
+
+        _analysis_status = {"running": True, "message": "Collecting HA context…"}
         snapshot = collect_ha_snapshot(options)
 
         _analysis_status["message"] = "Calling Claude for analysis…"
         proposal = run_analysis(snapshot, options)
+
+        # Record cost for budget tracking
+        cost_usd = proposal.pop("_cost_usd", 0.0)
+        if cost_usd > 0:
+            _record_usage(cost_usd)
 
         proposal_id = str(uuid.uuid4())
         proposal["id"] = proposal_id
@@ -237,6 +290,81 @@ def diff():
             "plan": preview,
         }
     )
+
+
+@app.route("/models")
+def list_models():
+    """Fetch available Claude models from the Anthropic API."""
+    options = load_options()
+    api_key = options.get("anthropic_api_key", "")
+    if not api_key:
+        return jsonify({"error": "No API key configured"}), 400
+    try:
+        models = list_anthropic_models(api_key)
+        return jsonify({"models": models})
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/settings", methods=["GET"])
+def get_settings():
+    """Return current non-sensitive options."""
+    options = load_options()
+    return jsonify({
+        "has_api_key": bool(options.get("anthropic_api_key", "")),
+        "anthropic_model": options.get("anthropic_model", ""),
+        "poll_interval_minutes": options.get("poll_interval_minutes", 0),
+        "monthly_budget_usd": options.get("monthly_budget_usd", DEFAULT_MONTHLY_BUDGET),
+        "include_logs": options.get("include_logs", False),
+        "allow_write_homeassistant_config": options.get("allow_write_homeassistant_config", False),
+    })
+
+
+@app.route("/settings", methods=["POST"])
+def update_settings():
+    """Update UI-editable settings (model, budget). Stored in /data/user_prefs.json."""
+    body = request.get_json(silent=True) or {}
+    prefs: Dict[str, Any] = {}
+    if USER_PREFS_PATH.exists():
+        try:
+            prefs = json.loads(USER_PREFS_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    if "anthropic_model" in body:
+        prefs["anthropic_model"] = str(body["anthropic_model"])
+    if "monthly_budget_usd" in body:
+        budget = float(body["monthly_budget_usd"])
+        prefs["monthly_budget_usd"] = round(min(max(budget, 0.0), MAX_MONTHLY_BUDGET), 4)
+    if "poll_interval_minutes" in body:
+        prefs["poll_interval_minutes"] = int(body["poll_interval_minutes"])
+
+    USER_PREFS_PATH.write_text(json.dumps(prefs, indent=2, ensure_ascii=False), encoding="utf-8")
+    # Return merged (non-sensitive) view
+    merged = load_options()
+    return jsonify({
+        "message": "Settings updated",
+        "anthropic_model": merged.get("anthropic_model"),
+        "monthly_budget_usd": merged.get("monthly_budget_usd"),
+        "poll_interval_minutes": merged.get("poll_interval_minutes"),
+    })
+
+
+@app.route("/budget")
+def budget_status():
+    """Return current month's estimated spending vs. the configured cap."""
+    usage = _load_usage()
+    options = load_options()
+    monthly_budget = float(options.get("monthly_budget_usd", DEFAULT_MONTHLY_BUDGET))
+    now_month = datetime.now(timezone.utc).strftime("%Y-%m")
+    spent = usage.get("current_month_usd", 0.0) if usage.get("month") == now_month else 0.0
+    return jsonify({
+        "month": now_month,
+        "current_month_usd": spent,
+        "monthly_budget_usd": monthly_budget,
+        "remaining_usd": round(max(0.0, monthly_budget - spent), 4),
+        "analyses_this_month": usage.get("analyses_this_month", 0) if usage.get("month") == now_month else 0,
+    })
 
 
 # ---------------------------------------------------------------------------

@@ -29,6 +29,7 @@ options:
   include_logs: false
   logs_max_lines: 100
   allow_write_homeassistant_config: false
+  monthly_budget_usd: 50.0
 schema:
   anthropic_api_key: password
   anthropic_model: str
@@ -37,3 +38,4 @@ schema:
   include_logs: bool
   logs_max_lines: int
   allow_write_homeassistant_config: bool
+  monthly_budget_usd: float
